@@ -39,6 +39,19 @@
   .conn.err { background: rgba(255,51,51,0.1); }
   .conn.err .dot { background: var(--red); }
   .conn .name { color: var(--muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* MIDI Selector */
+  .midi-selector { position: relative; }
+  .midi-select {
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-size: 0.55rem; font-family: inherit; letter-spacing: 0.5px;
+    padding: 5px 24px 5px 10px; cursor: pointer; outline: none; max-width: 140px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23555'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    transition: border-color 0.2s;
+  }
+  .midi-select:focus { border-color: var(--orange); }
+  .midi-select option { background: var(--surface); color: var(--text); max-width: 200px; }
 
   /* Display */
   .display { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 20px; min-height: 0; gap: 4px; }
@@ -157,7 +170,10 @@
       <h1>Electribe ES-1</h1>
       <div class="sub">Pattern Change - USB MIDI</div>
     </div>
-    <div class="conn" id="conn"><div class="dot"></div><span class="name" id="conn-name">Connecting...</span></div>
+    <div class="midi-selector">
+      <select class="midi-select" id="midi-select"><option value="">Cargando...</option></select>
+      <div class="conn" id="conn"><div class="dot"></div><span class="name" id="conn-name">Connecting...</span></div>
+    </div>
   </div>
 
   <div class="display">
@@ -235,19 +251,62 @@
   const $numpad = document.querySelector('.numpad-grid');
   const $bankA = document.getElementById('bank-a');
   const $bankB = document.getElementById('bank-b');
+  const $midiSelect = document.getElementById('midi-select');
 
   // MIDI Setup
   async function initMidi() {
     try {
       midiAccess = await navigator.requestMIDIAccess();
-      midiAccess.onstatechange = () => findElectribe();
+      midiAccess.onstatechange = () => {
+        populateMidiDevices();
+        findElectribe();
+      };
+      populateMidiDevices();
       await findElectribe();
     } catch(e) {
       console.error(e);
       $conn.className = 'conn err';
       $connName.textContent = 'No MIDI access';
+      $midiSelect.innerHTML = '<option value="">Sin acceso MIDI</option>';
     }
   }
+
+  function populateMidiDevices() {
+    $midiSelect.innerHTML = '';
+    const outputs = [];
+    for (const [id, output] of midiAccess.outputs) {
+      if (output.state === 'connected') {
+        outputs.push({ id, name: output.name || `MIDI ${id}`, output });
+      }
+    }
+    if (outputs.length === 0) {
+      $midiSelect.innerHTML = '<option value="">Sin dispositivos</option>';
+      $midiSelect.disabled = true;
+      return;
+    }
+    $midiSelect.disabled = false;
+    outputs.forEach(({ id, name }) => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = name;
+      $midiSelect.appendChild(opt);
+    });
+  }
+
+  $midiSelect.addEventListener('change', () => {
+    const selectedId = $midiSelect.value;
+    if (!selectedId || !midiAccess) return;
+    for (const [id, output] of midiAccess.outputs) {
+      if (id === selectedId && output.state === 'connected') {
+        midiOut = output;
+        $conn.className = 'conn ok';
+        $connName.textContent = output.name || 'Connected';
+        toast(`Cambiado a ${output.name || 'MIDI'}`);
+        console.log('Manual switch:', output.name);
+        break;
+      }
+    }
+  });
 
   async function findElectribe() {
     midiOut = null;
@@ -255,10 +314,10 @@
     $connName.textContent = 'Scanning...';
 
     const wait = new Promise(r => setTimeout(r, 2000));
-    for (const [, output] of midiAccess.outputs) {
+    for (const [id, output] of midiAccess.outputs) {
       const name = output.name || '';
       const state = output.state;
-      console.log('MIDI output:', name, 'state:', state, 'id:', output.id);
+      console.log('MIDI output:', name, 'state:', state, 'id:', id);
 
       if (state === 'connected' &&
           (name.toLowerCase().includes('electribe') ||
@@ -266,17 +325,19 @@
            name.toLowerCase().includes('es1') ||
            name.toLowerCase().includes('korg'))) {
         midiOut = output;
-        console.log('Found Electribe:', name, output.id);
+        $midiSelect.value = id;
+        console.log('Found Electribe:', name, id);
         break;
       }
     }
 
     // Fallback: grab first connected output
     if (!midiOut) {
-      for (const [, output] of midiAccess.outputs) {
+      for (const [id, output] of midiAccess.outputs) {
         if (output.state === 'connected') {
           midiOut = output;
-          console.log('Fallback connected:', output.name, output.id);
+          $midiSelect.value = id;
+          console.log('Fallback connected:', output.name, id);
           break;
         }
       }
